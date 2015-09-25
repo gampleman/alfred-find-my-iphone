@@ -201,6 +201,7 @@ class IOSDeviceLocator
     device.class = hsh['deviceClass']
     device.display_name = hsh['deviceDisplayName']
     device.model = hsh['deviceModel']
+    device.battery = hsh['batteryStatus'] == 'Unknown' ? nil : (hsh['batteryLevel'] * 100).round + '% ' + hsh['batteryStatus']
 
     if (location = hsh['location'])
       device.latitude = location['latitude']

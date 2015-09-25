@@ -12,6 +12,25 @@ class FindMyiPhone
     @creds_file = ".auth_token"
   end
 
+  def show_login_ui!
+    username = nil, password = nil
+    result = `osascript -e 'tell application "SystemUIServer" to display dialog "In order to fetch your iOS devices, I need to configure your AppleID credentials. Please enter your AppleID email." default answer "Username" buttons ["Cancel", "Enter Password"] default button "Enter Password" cancel button "Cancel" with icon 2'`
+    if result =~ /button returned:Enter Password, text returned:\s*(.+)\s*/
+      username = $1
+      result = `osascript -e 'tell application "SystemUIServer" to display dialog "In order to fetch your iOS devices, I need to configure your AppleID credentials. Please enter your AppleID password" default answer "Password" hidden answer true buttons ["Cancel", "Sign in"] default button "Sign in" cancel button "Cancel" with icon 2'`
+      if result =~ /button returned:Sign in, text returned:(.+)\s*/
+        password = $1
+        store_creds username, password
+        begin
+          load_remote_devices username, password
+          puts "You are now logged in. Go ahead and find your iPhone!"
+        rescue WrongCreds => e
+          puts "Looks like your username or password was wrong. Try again!"
+        end
+      end
+    end
+  end
+
   def store_creds(username, password)
     if username && username.length > 0 && password && password.length > 0
       File.open(@creds_file, 'w') do |f|
@@ -35,15 +54,19 @@ class FindMyiPhone
     devices
   end
 
+  def build_no_creds_response(message)
+    XmlBuilder.build do |b|
+      b.items do
+        b.item Item.new(b.object_id, "authenticate", message, "Press ⏎ to enter your iCloud email and password.", 'yes')
+      end
+    end
+  end
+
   def list_devices(query)
     begin
       username, password = load_creds
     rescue Exception => e
-      return XmlBuilder.build do |b|
-        b.items do
-          b.item Item.new(e.object_id, "authenticate", "No credentials found", "Run 'find authenticate &lt;username&gt; &lt;password&gt;' to set your iCloud creds", 'no')
-        end
-      end
+      return build_no_creds_response "No email and password found"
     end
     begin
       devices = []
@@ -65,18 +88,17 @@ class FindMyiPhone
       XmlBuilder.build do |b|
         b.items do
           devices.each do |d|
-            b.item Item.new(d['id'], d['id'], d['name'], d['deviceDisplayName'] + ' - Send alarm', 'yes', "icons/#{d['deviceStatus'].to_i == 200 ? 'online' : 'offline'}/#{d['rawDeviceModel']}.png")
+            description = [d['deviceDisplayName']]
+            description << (d['batteryStatus'] == 'Unknown' ? nil : (d['batteryLevel'] * 100).round.to_s + '% Battery')
+            description << 'Play Sound'
+            b.item Item.new(d['id'], d['id'], d['name'], description.reject(&:nil?).join(' – '), 'yes', "icons/#{d['deviceStatus'].to_i == 200 ? 'online' : 'offline'}/#{d['rawDeviceModel']}.png")
           end
         end
       end
     rescue WrongCreds => e
       file = Dir['./cache-*'].first
       FileUtils.rm file if file
-      return XmlBuilder.build do |b|
-        b.items do
-          b.item Item.new(e.object_id, "authenticate", "Unable to login to iCloud", "Run 'find authenticate &lt;username&gt; &lt;password&gt;' to set correct iCloud creds", 'no')
-        end
-      end
+      return build_no_creds_response "Your email or password was invalid"
     end
   end
 
@@ -92,8 +114,14 @@ if ARGV[0] == '--authenticate'
   obj.store_creds *ARGV[1].split(/\\\s+/)
   puts "Credentials saved"
 elsif ARGV[0] == '--ring'
-  obj.ring_device ARGV[1]
-  puts "Alarm sent"
+  q = ARGV[1]
+  if q == 'authenticate'
+    obj.show_login_ui!
+    exit
+  else
+    obj.ring_device q
+    puts "Alarm sent"
+  end
 else
   puts obj.list_devices ARGV[0]
 end
